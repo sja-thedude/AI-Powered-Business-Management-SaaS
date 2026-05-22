@@ -21,13 +21,19 @@ class DatabaseSeeder extends Seeder
         // 1. Global permission catalog.
         $this->call(PermissionSeeder::class);
 
+        // Demo accounts (roles/emails/password) come from config/demo.php,
+        // which is driven by SEED_* env vars.
+        $password = Hash::make(config('demo.password'));
+        $accounts = collect(config('demo.accounts'));
+        $ownerAccount = $accounts->firstWhere('role', 'Owner');
+
         // 2. A demo workspace with its Owner (provisioner sets tenant context).
         $owner = app(TenantProvisioner::class)->provision(
-            tenantData: ['name' => 'Acme Inc', 'plan' => 'growth'],
+            tenantData: ['name' => config('demo.workspace'), 'plan' => 'growth'],
             ownerData: [
-                'name'     => 'Ava Owner',
-                'email'    => 'owner@novabiz.test',
-                'password' => Hash::make('password'),
+                'name'     => $ownerAccount['name'],
+                'email'    => $ownerAccount['email'],
+                'password' => $password,
             ],
         );
 
@@ -35,24 +41,22 @@ class DatabaseSeeder extends Seeder
         app(TenantContext::class)->set($tenant);
         app(PermissionRegistrar::class)->setPermissionsTeamId($tenant->id);
 
-        $this->command->info("Seeded tenant #{$tenant->id} ({$tenant->name}). Login: owner@novabiz.test / password");
+        $this->command->info("Seeded tenant #{$tenant->id} ({$tenant->name}). Login: {$ownerAccount['email']} / ".config('demo.password'));
 
-        // 3. A small team.
-        $admin = User::create([
-            'tenant_id' => $tenant->id, 'name' => 'Adam Admin',
-            'email' => 'admin@novabiz.test', 'password' => Hash::make('password'),
-            'position' => 'Operations Lead',
-        ]);
-        $admin->assignRole('Admin');
+        // 3. The rest of the team (every non-Owner account in config/demo.php).
+        $team = [$owner->id];
 
-        $member = User::create([
-            'tenant_id' => $tenant->id, 'name' => 'Mia Member',
-            'email' => 'member@novabiz.test', 'password' => Hash::make('password'),
-            'position' => 'Account Executive',
-        ]);
-        $member->assignRole('Member');
-
-        $team = [$owner->id, $admin->id, $member->id];
+        foreach ($accounts->where('role', '!=', 'Owner') as $account) {
+            $user = User::create([
+                'tenant_id' => $tenant->id,
+                'name'      => $account['name'],
+                'email'     => $account['email'],
+                'password'  => $password,
+                'position'  => $account['position'],
+            ]);
+            $user->assignRole($account['role']);
+            $team[] = $user->id;
+        }
 
         // 4. CRM demo data.
         $pipeline = app(PipelineFactory::class)->defaultPipeline();
